@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -27,6 +29,7 @@ func New(st *store.Store) http.Handler {
 	r.Get("/health", s.health)
 	r.Post("/api/imports", s.importCSV)
 	r.Get("/api/overview", s.overview)
+	r.Get("/api/endpoints", s.endpoints)
 	return r
 }
 
@@ -100,6 +103,51 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, compute.BuildOverview(rows, from, to))
+}
+
+func (s *Server) endpoints(w http.ResponseWriter, r *http.Request) {
+	from, to, emptyDB, err := parseWindow(r, s.Store)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_window", err.Error())
+		return
+	}
+	if emptyDB {
+		writeJSON(w, http.StatusOK, compute.EndpointPage{Items: []compute.EndpointRow{}, Page: 1, PerPage: 20})
+		return
+	}
+	rows, err := s.Store.ListInWindow(r.Context(), from, to)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query_failed", "读取请求失败")
+		return
+	}
+	page, perPage := parsePage(r)
+	out := compute.PageEndpoints(compute.AggregateEndpoints(rows), compute.EndpointQuery{
+		Search:    r.URL.Query().Get("q"),
+		Anomalous: r.URL.Query().Get("anomalous") == "1",
+		Sort:      r.URL.Query().Get("sort"),
+		Order:     r.URL.Query().Get("order"),
+		Page:      page,
+		PerPage:   perPage,
+	})
+	fromStr := from.UTC().Format(time.RFC3339)
+	toStr := to.UTC().Format(time.RFC3339)
+	out.From = &fromStr
+	out.To = &toStr
+	writeJSON(w, http.StatusOK, out)
+}
+
+func parsePage(r *http.Request) (page, perPage int) {
+	page, perPage = 1, 20
+	if v, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && v > 0 {
+		page = v
+	}
+	if v, err := strconv.Atoi(r.URL.Query().Get("per_page")); err == nil && v > 0 {
+		perPage = v
+	}
+	if perPage > 100 {
+		perPage = 100
+	}
+	return page, perPage
 }
 
 type errorBody struct {
