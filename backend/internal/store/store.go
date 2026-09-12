@@ -45,6 +45,37 @@ func (s *Store) Count(ctx context.Context) (int64, error) {
 	return n, err
 }
 
+func (s *Store) TimeBounds(ctx context.Context) (from *time.Time, to *time.Time, err error) {
+	var minTS, maxTS *time.Time
+	err = s.Pool.QueryRow(ctx, `SELECT MIN(ts), MAX(ts) FROM api_requests`).Scan(&minTS, &maxTS)
+	if err != nil {
+		return nil, nil, err
+	}
+	return minTS, maxTS, nil
+}
+
+func (s *Store) ListInWindow(ctx context.Context, from, to time.Time) ([]Request, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT request_id, ts, service, endpoint, method, status_code, latency_ms
+		FROM api_requests
+		WHERE ts >= $1 AND ts <= $2
+	`, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Request
+	for rows.Next() {
+		var row Request
+		if err := rows.Scan(&row.RequestID, &row.TS, &row.Service, &row.Endpoint, &row.Method, &row.StatusCode, &row.LatencyMS); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) Close() {
 	if s != nil && s.Pool != nil {
 		s.Pool.Close()

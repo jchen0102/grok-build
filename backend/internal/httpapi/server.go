@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/jchen0102/grok-build/internal/compute"
 	"github.com/jchen0102/grok-build/internal/importdata"
 	"github.com/jchen0102/grok-build/internal/store"
 )
@@ -22,9 +23,24 @@ func New(st *store.Store) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RealIP)
+	r.Use(cors)
 	r.Get("/health", s.health)
 	r.Post("/api/imports", s.importCSV)
+	r.Get("/api/overview", s.overview)
 	return r
+}
+
+func cors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
@@ -66,6 +82,24 @@ func (s *Server) importCSV(w http.ResponseWriter, r *http.Request) {
 	importdata.ApplyDBDuplicates(result, rows, dbDups)
 	result.Summary.Success = inserted
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
+	from, to, emptyDB, err := parseWindow(r, s.Store)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_window", err.Error())
+		return
+	}
+	if emptyDB {
+		writeJSON(w, http.StatusOK, compute.Overview{Empty: true, Trend: []compute.HourBucket{}})
+		return
+	}
+	rows, err := s.Store.ListInWindow(r.Context(), from, to)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query_failed", "读取请求失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, compute.BuildOverview(rows, from, to))
 }
 
 type errorBody struct {
