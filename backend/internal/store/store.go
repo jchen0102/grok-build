@@ -14,13 +14,13 @@ type Store struct {
 }
 
 type Request struct {
-	RequestID  string
-	TS         time.Time
-	Service    string
-	Endpoint   string
-	Method     string
-	StatusCode int
-	LatencyMS  int
+	RequestID  string    `json:"request_id"`
+	TS         time.Time `json:"ts"`
+	Service    string    `json:"service"`
+	Endpoint   string    `json:"endpoint"`
+	Method     string    `json:"method"`
+	StatusCode int       `json:"status_code"`
+	LatencyMS  int       `json:"latency_ms"`
 }
 
 func Open(ctx context.Context, databaseURL string) (*Store, error) {
@@ -52,6 +52,59 @@ func (s *Store) TimeBounds(ctx context.Context) (from *time.Time, to *time.Time,
 		return nil, nil, err
 	}
 	return minTS, maxTS, nil
+}
+
+type ListFilter struct {
+	From       time.Time
+	To         time.Time
+	Service    string
+	Endpoint   string
+	Method     string
+	StatusCode *int
+	Limit      int
+	Offset     int
+}
+
+func (s *Store) CountFiltered(ctx context.Context, f ListFilter) (int, error) {
+	var n int
+	err := s.Pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM api_requests
+		WHERE ts >= $1 AND ts <= $2
+		  AND ($3 = '' OR service = $3)
+		  AND ($4 = '' OR endpoint = $4)
+		  AND ($5 = '' OR method = $5)
+		  AND ($6::int IS NULL OR status_code = $6)
+	`, f.From, f.To, f.Service, f.Endpoint, f.Method, f.StatusCode).Scan(&n)
+	return n, err
+}
+
+func (s *Store) ListPage(ctx context.Context, f ListFilter) ([]Request, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT request_id, ts, service, endpoint, method, status_code, latency_ms
+		FROM api_requests
+		WHERE ts >= $1 AND ts <= $2
+		  AND ($3 = '' OR service = $3)
+		  AND ($4 = '' OR endpoint = $4)
+		  AND ($5 = '' OR method = $5)
+		  AND ($6::int IS NULL OR status_code = $6)
+		ORDER BY ts DESC, request_id DESC
+		LIMIT $7 OFFSET $8
+	`, f.From, f.To, f.Service, f.Endpoint, f.Method, f.StatusCode, f.Limit, f.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Request
+	for rows.Next() {
+		var row Request
+		if err := rows.Scan(&row.RequestID, &row.TS, &row.Service, &row.Endpoint, &row.Method, &row.StatusCode, &row.LatencyMS); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) ListInWindow(ctx context.Context, from, to time.Time) ([]Request, error) {

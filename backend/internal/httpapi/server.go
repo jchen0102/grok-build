@@ -30,6 +30,7 @@ func New(st *store.Store) http.Handler {
 	r.Post("/api/imports", s.importCSV)
 	r.Get("/api/overview", s.overview)
 	r.Get("/api/endpoints", s.endpoints)
+	r.Get("/api/requests", s.requests)
 	return r
 }
 
@@ -134,6 +135,63 @@ func (s *Server) endpoints(w http.ResponseWriter, r *http.Request) {
 	out.From = &fromStr
 	out.To = &toStr
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) requests(w http.ResponseWriter, r *http.Request) {
+	from, to, emptyDB, err := parseWindow(r, s.Store)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_window", err.Error())
+		return
+	}
+	page, perPage := parsePage(r)
+	if emptyDB {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"from": nil, "to": nil, "page": page, "per_page": perPage, "total": 0, "items": []store.Request{},
+		})
+		return
+	}
+
+	q := r.URL.Query()
+	var status *int
+	if raw := q.Get("status_code"); raw != "" {
+		v, convErr := strconv.Atoi(raw)
+		if convErr != nil {
+			writeError(w, http.StatusBadRequest, "invalid_status", "status_code 必须是整数")
+			return
+		}
+		status = &v
+	}
+	filter := store.ListFilter{
+		From:       from,
+		To:         to,
+		Service:    q.Get("service"),
+		Endpoint:   q.Get("endpoint"),
+		Method:     q.Get("method"),
+		StatusCode: status,
+		Limit:      perPage,
+		Offset:     (page - 1) * perPage,
+	}
+	total, err := s.Store.CountFiltered(r.Context(), filter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query_failed", "统计请求失败")
+		return
+	}
+	items, err := s.Store.ListPage(r.Context(), filter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query_failed", "读取请求失败")
+		return
+	}
+	if items == nil {
+		items = []store.Request{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"from":     from.UTC().Format(time.RFC3339),
+		"to":       to.UTC().Format(time.RFC3339),
+		"page":     page,
+		"per_page": perPage,
+		"total":    total,
+		"items":    items,
+	})
 }
 
 func parsePage(r *http.Request) (page, perPage int) {
