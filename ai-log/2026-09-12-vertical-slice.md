@@ -27,7 +27,7 @@
 | 4 | `GET /api/overview` + 看板 | 六指标与库手算一致；Playwright：7591 / 4.47% / 162.6 / 438 / 5 / 3 + 小时图 |
 | 5 | `GET /api/endpoints` + 表 | 默认异常优先；`anomalous=1` 3 行；cart n=15 不标异常；点异常卡带同一 UTC 窗 |
 | 6 | `GET /api/requests` | 过滤数=库计数；`ts DESC, request_id DESC`；点聚合行进原始记录并可翻页 |
-| 7 | compose + 中文 README + 本目录 | `docker compose up --build` 后导入 demo 再走主路径 |
+| 7 | compose + 中文 README + 本目录 | `docker compose up --build` 后导入 7591 行；nginx 反代总览数字与本机手算一致；看板→异常表→原始记录可点透 |
 
 ## 口径（未改计划，只落代码）
 

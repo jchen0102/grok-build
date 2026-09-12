@@ -26,7 +26,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	if err := store.Migrate(databaseURL); err != nil {
+	if err := waitMigrate(ctx, databaseURL); err != nil {
 		log.Fatalf("migrate: %v", err)
 	}
 
@@ -53,4 +53,21 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	_ = srv.Shutdown(shutdownCtx)
+}
+
+func waitMigrate(ctx context.Context, databaseURL string) error {
+	var last error
+	for i := 0; i < 30; i++ {
+		last = store.Migrate(databaseURL)
+		if last == nil {
+			return nil
+		}
+		log.Printf("migrate retry %d/30: %v", i+1, last)
+		select {
+		case <-ctx.Done():
+			return last
+		case <-time.After(time.Second):
+		}
+	}
+	return last
 }
